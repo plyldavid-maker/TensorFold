@@ -647,11 +647,12 @@ pub const Model = struct {
             for (0..c.dspark_taps.slice().len) |j| try e.ops.copyRows(e.s, prompt.tapRows(e, ch, j), dw * 2, dr.at + j * dw * 2, dr.taps_w * 2, dw * 2, ch.n);
             try dr.absorb(e, ch, &m.dpool.?, m.fill_slot, dr.at, ch.n, ch.start);
         }
-        // no synchronize: the next chunk's host steps (its first Engram layer's hashing, table reads and decode, ~0.14 s
-        // at 2,048 rows) run while this chunk's kernels do; readers of the results (the prompt's logits) synchronize.
-        // The profile (--profile 2) times a chunk to its end, so it alone waits.
+        // fill-to-verify boundary drain (issue #16 short-prompt deadlock): a short prompt fills its last chunk's
+        // kernels and the verify round then enqueues its own collectives. Without a drain the two ranks'
+        // position-matched collectives can mispair across the fill/verify boundary and deadlock. Waiting here costs
+        // the fill/verify overlap, but makes the collective sequence deterministic at the boundary.
+        try m.stream.synchronize();
         if (pt) |t| {
-            try m.stream.synchronize();
             try t.finish();
         }
         return true;
